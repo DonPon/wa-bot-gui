@@ -146,12 +146,7 @@ def seed_contacts(conn):
             ]
         except Exception:
             contacts = []
-    if not contacts:
-        contacts = [
-            {"key": "gaby", "name": "Gaby", "jid": "5215543450638@s.whatsapp.net"},
-            {"key": "angelo", "name": "Angelo", "jid": "393454439222@s.whatsapp.net"},
-            {"key": "abuela", "name": "Abuela", "jid": "5215587654321@s.whatsapp.net"},
-        ]
+
     for c in contacts:
         conn.execute(
             "INSERT INTO contacts (key, name, jid, created_at, updated_at)"
