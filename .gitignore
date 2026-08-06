@@ -9,3 +9,4 @@ tunnel.pid
 tunnel.url
 progress-checklist.md
 .venv/
+__pycache__/
