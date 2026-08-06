@@ -1,0 +1,11 @@
+.env
+*.db
+*.txt
+*.json
+*.log
+*.csv
+*.db
+tunnel.pid
+tunnel.url
+progress-checklist.md
+.venv/

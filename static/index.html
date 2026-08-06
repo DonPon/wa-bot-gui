@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WA Bot Scheduler</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <span class="logo">🤖</span>
+      <h1>WA Bot Scheduler</h1>
+      <span id="status-pill" class="pill pill-unknown">…</span>
+    </div>
+    <nav class="tabs">
+      <button class="tab-btn active" data-tab="jobs">Jobs</button>
+      <button class="tab-btn" data-tab="contacts">Contactos</button>
+      <button class="tab-btn" data-tab="muestras">Muestras</button>
+    </nav>
+    <div id="sched-info" class="sched-info"></div>
+  </header>
+
+  <main>
+    <!-- Pestaña: Jobs -->
+    <section id="section-jobs">
+      <div class="toolbar">
+        <button id="btn-add" class="btn btn-primary">+ Agregar job</button>
+        <button id="btn-refresh" class="btn">⟳ Refrescar</button>
+        <div id="last-refresh" class="muted"></div>
+      </div>
+      <div id="jobs-container">
+        <p class="muted">Cargando jobs…</p>
+      </div>
+    </section>
+
+    <!-- Pestaña: Contactos -->
+    <section id="section-contacts" class="hidden">
+      <div class="toolbar">
+        <button id="btn-add-contact" class="btn btn-primary">+ Agregar contacto</button>
+      </div>
+      <div id="contacts-container">
+        <p class="muted">Cargando contactos…</p>
+      </div>
+    </section>
+
+    <!-- Pestaña: Muestras -->
+    <section id="section-muestras" class="hidden">
+      <div class="toolbar">
+        <label class="filter-label">Persona
+          <select id="muestra-filter"><option value="all">todas</option></select>
+        </label>
+        <button id="btn-add-muestra" class="btn btn-primary">+ Agregar muestra</button>
+      </div>
+      <div id="muestras-container">
+        <p class="muted">Cargando muestras…</p>
+      </div>
+    </section>
+  </main>
+
+  <!-- Login -->
+  <div id="login-overlay" class="modal">
+    <div class="modal-box">
+      <div class="modal-header">
+        <h2>🔑 WA Bot Scheduler</h2>
+      </div>
+      <form id="login-form">
+        <label>Token de acceso
+          <input type="password" id="login-token" required autofocus placeholder="Ingresa el token" />
+        </label>
+        <p id="login-error" class="muted" style="color: var(--red); display: none;">Token incorrecto.</p>
+        <div class="modal-actions">
+          <button type="submit" class="btn btn-primary">Entrar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal add/edit job -->
+  <div id="modal" class="modal hidden">
+    <div class="modal-box">
+      <div class="modal-header">
+        <h2 id="modal-title">Nuevo job</h2>
+        <button id="btn-close-modal" class="btn-close">✕</button>
+      </div>
+      <form id="job-form">
+        <input type="hidden" id="f-id" />
+        <label>Nombre
+          <input type="text" id="f-name" required maxlength="100" placeholder="p. ej. Mensaje a Gaby" />
+        </label>
+        <label>Persona
+          <select id="f-persona"></select>
+          <p id="job-no-contacts" class="muted small hidden" style="color:var(--amber)">No hay contactos. Agrega uno en la pestaña “Contactos”.</p>
+        </label>
+        <label>Hora
+          <input type="time" id="f-time" required />
+        </label>
+
+        <fieldset>
+          <legend>Días</legend>
+          <div class="radio-row">
+            <label><input type="radio" name="days_mode" value="fixed" checked /> Días fijos</label>
+            <label><input type="radio" name="days_mode" value="random" /> Días aleatorios</label>
+          </div>
+
+          <div id="fixed-days">
+            <div class="weekdays">
+              <label><input type="checkbox" class="wd" value="0" /> lun</label>
+              <label><input type="checkbox" class="wd" value="1" /> mar</label>
+              <label><input type="checkbox" class="wd" value="2" /> mié</label>
+              <label><input type="checkbox" class="wd" value="3" /> jue</label>
+              <label><input type="checkbox" class="wd" value="4" /> vie</label>
+              <label><input type="checkbox" class="wd" value="5" /> sáb</label>
+              <label><input type="checkbox" class="wd" value="6" /> dom</label>
+            </div>
+          </div>
+
+          <div id="random-days" class="hidden">
+            <label>Días aleatorios por semana (1-7)
+              <input type="number" id="f-random" min="1" max="7" value="2" />
+            </label>
+            <p class="muted small">El bot sorteará esa cantidad de días distintos cada semana y correrá solo en ellos.</p>
+          </div>
+        </fieldset>
+
+        <div class="checks">
+          <label><input type="checkbox" id="f-dry-run" /> Dry-run (no envía, solo muestra)</label>
+          <label><input type="checkbox" id="f-enabled" checked /> Habilitado</label>
+          <label><input type="checkbox" id="f-delay-enabled" /> Retardo aleatorio antes de enviar</label>
+        </div>
+
+        <div id="delay-options" class="hidden">
+          <div class="row-2">
+            <label>Mínimo (min)
+              <input type="number" id="f-delay-min" min="0" max="1440" value="1" />
+            </label>
+            <label>Máximo (min)
+              <input type="number" id="f-delay-max" min="1" max="1440" value="60" />
+            </label>
+          </div>
+          <p class="muted small">El mensaje se enviará con una demora aleatoria dentro de ese rango (por defecto se envía de inmediato).</p>
+        </div>
+
+        <div class="modal-actions">
+          <button type="button" id="btn-cancel" class="btn">Cancelar</button>
+          <button type="submit" class="btn btn-primary">Guardar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal add/edit contacto -->
+  <div id="modal-contact" class="modal hidden">
+    <div class="modal-box">
+      <div class="modal-header">
+        <h2 id="modal-contact-title">Nuevo contacto</h2>
+        <button id="btn-close-contact" class="btn-close">✕</button>
+      </div>
+      <form id="contact-form">
+        <input type="hidden" id="f-c-id" />
+        <label>Clave (identificador único)
+          <input type="text" id="f-c-key" required maxlength="50" placeholder="p. ej. gaby" autocomplete="off" />
+        </label>
+        <label>Nombre
+          <input type="text" id="f-c-name" required maxlength="100" placeholder="p. ej. Gaby" />
+        </label>
+        <label>JID / número de WhatsApp
+          <input type="text" id="f-c-jid" required maxlength="200" placeholder="p. ej. 521…@s.whatsapp.net" autocomplete="off" />
+        </label>
+        <p class="muted small">La clave se usa como “persona” en jobs y muestras. Solo minúsculas, números, _ y -.</p>
+        <div class="modal-actions">
+          <button type="button" id="btn-cancel-contact" class="btn">Cancelar</button>
+          <button type="submit" class="btn btn-primary">Guardar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal add/edit muestra -->
+  <div id="modal-muestra" class="modal hidden">
+    <div class="modal-box">
+      <div class="modal-header">
+        <h2 id="modal-muestra-title">Nueva muestra</h2>
+        <button id="btn-close-muestra" class="btn-close">✕</button>
+      </div>
+      <form id="muestra-form">
+        <input type="hidden" id="f-m-id" />
+        <label>Persona
+          <select id="f-m-persona" required></select>
+        </label>
+        <label>Texto de la muestra
+          <textarea id="f-m-text" required maxlength="2000" rows="4" placeholder="Escribe el mensaje…"></textarea>
+        </label>
+        <div class="checks">
+          <label><input type="checkbox" id="f-m-enabled" checked /> Habilitada</label>
+        </div>
+        <div class="modal-actions">
+          <button type="button" id="btn-cancel-muestra" class="btn">Cancelar</button>
+          <button type="submit" class="btn btn-primary">Guardar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal historial -->
+  <div id="modal-history" class="modal hidden">
+    <div class="modal-box modal-wide">
+      <div class="modal-header">
+        <h2 id="history-title">Historial</h2>
+        <button id="btn-close-history" class="btn-close">✕</button>
+      </div>
+      <div id="history-body"></div>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

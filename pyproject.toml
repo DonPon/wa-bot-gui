@@ -1,0 +1,10 @@
+[project]
+name = "wa-scheduler"
+version = "0.1.0"
+description = "Web GUI para schedulear ejecuciones de wa-bot.sh"
+requires-python = ">=3.10"
+dependencies = [
+    "dotenv>=0.9.9",
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+]
