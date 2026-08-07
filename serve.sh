@@ -13,7 +13,7 @@ kill_tunnel() {
     [ -n "${TPID:-}" ] && kill "$TPID" 2>/dev/null
   fi
   pkill -f "tunnel.sh" 2>/dev/null
-  pkill -f "localtunnel" 2>/dev/null
+  pkill -f "ngrok" 2>/dev/null
 }
 
 cleanup() {

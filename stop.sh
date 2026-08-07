@@ -8,13 +8,13 @@ PORT="${PORT:-8787}"
 #    el watchdog reinicie el server/túnel inmediatamente después).
 pkill -f "serve.sh" 2>/dev/null
 
-# 2) Detener el túnel de forma directa y definitiva (wrapper + localtunnel).
+# 2) Detener el túnel de forma directa y definitiva (wrapper + ngrok).
 if [ -f tunnel.pid ]; then
   TPID=$(cat tunnel.pid 2>/dev/null || true)
   [ -n "${TPID:-}" ] && kill "$TPID" 2>/dev/null
 fi
 pkill -f "tunnel.sh" 2>/dev/null
-pkill -f "localtunnel" 2>/dev/null
+pkill -f "ngrok" 2>/dev/null
 
 # 3) Detener el servidor.
 pkill -f "wa-scheduler/.venv/bin/python.*app.py" 2>/dev/null
