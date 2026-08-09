@@ -5,6 +5,7 @@ import random
 import re
 import sqlite3
 import threading
+import time
 from contextlib import asynccontextmanager
 from datetime import datetime, date, timedelta, time as dtime
 from pathlib import Path
@@ -16,6 +17,8 @@ from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Query
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator, model_validator
+
+from seeds import init_db
 
 load_dotenv()
 TOKEN = os.environ.get("TOKEN")
@@ -57,138 +60,6 @@ def db():
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA busy_timeout=5000")
     return conn
-
-
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS jobs (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  name TEXT NOT NULL,
-  persona TEXT NOT NULL,
-  time TEXT NOT NULL,
-  days_mode TEXT NOT NULL DEFAULT 'fixed',
-  weekdays TEXT NOT NULL DEFAULT '[]',
-  random_per_week INTEGER NOT NULL DEFAULT 0,
-  dry_run INTEGER NOT NULL DEFAULT 0,
-  enabled INTEGER NOT NULL DEFAULT 1,
-  week_rolls TEXT NOT NULL DEFAULT '{}',
-  last_run_date TEXT,
-  delay_enabled INTEGER NOT NULL DEFAULT 0,
-  delay_min INTEGER NOT NULL DEFAULT 1,
-  delay_max INTEGER NOT NULL DEFAULT 60,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS runs (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  job_id INTEGER NOT NULL,
-  trigger TEXT NOT NULL,
-  scheduled_at TEXT NOT NULL,
-  started_at TEXT,
-  finished_at TEXT,
-  exit_code INTEGER,
-  status TEXT NOT NULL DEFAULT 'running',
-  output TEXT,
-  command TEXT,
-  send_at TEXT,
-  delay_seconds INTEGER NOT NULL DEFAULT 0
-);
-CREATE TABLE IF NOT EXISTS contacts (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  key TEXT NOT NULL UNIQUE,
-  name TEXT NOT NULL,
-  jid TEXT NOT NULL,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS muestras (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  persona TEXT NOT NULL,
-  text TEXT NOT NULL,
-  enabled INTEGER NOT NULL DEFAULT 1,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_muestras_persona ON muestras(persona);
-"""
-
-
-def _migrate_jobs(conn):
-    cols = {r[1] for r in conn.execute("PRAGMA table_info(jobs)").fetchall()}
-    if "delay_enabled" not in cols:
-        conn.execute("ALTER TABLE jobs ADD COLUMN delay_enabled INTEGER NOT NULL DEFAULT 0")
-    if "delay_min" not in cols:
-        conn.execute("ALTER TABLE jobs ADD COLUMN delay_min INTEGER NOT NULL DEFAULT 1")
-    if "delay_max" not in cols:
-        conn.execute("ALTER TABLE jobs ADD COLUMN delay_max INTEGER NOT NULL DEFAULT 60")
-
-
-def _migrate_runs(conn):
-    cols = {r[1] for r in conn.execute("PRAGMA table_info(runs)").fetchall()}
-    if "send_at" not in cols:
-        conn.execute("ALTER TABLE runs ADD COLUMN send_at TEXT")
-    if "delay_seconds" not in cols:
-        conn.execute("ALTER TABLE runs ADD COLUMN delay_seconds INTEGER NOT NULL DEFAULT 0")
-
-
-def seed_contacts(conn):
-    if conn.execute("SELECT COUNT(*) FROM contacts").fetchone()[0]:
-        return
-    now = datetime.now().isoformat()
-    contacts = []
-    json_path = BASE_DIR / "contactos.json"
-    if json_path.exists():
-        try:
-            data = json.loads(json_path.read_text(encoding="utf-8"))
-            contacts = [
-                {"key": k, "name": k.capitalize(), "jid": v}
-                for k, v in data.items()
-                if isinstance(v, str) and v.strip()
-            ]
-        except Exception:
-            contacts = []
-
-    for c in contacts:
-        conn.execute(
-            "INSERT INTO contacts (key, name, jid, created_at, updated_at)"
-            " VALUES (?,?,?,?,?)",
-            (c["key"], c["name"], c["jid"], now, now),
-        )
-
-
-def seed_muestras(conn):
-    if conn.execute("SELECT COUNT(*) FROM muestras").fetchone()[0]:
-        return
-    now = datetime.now().isoformat()
-    for f in sorted(BASE_DIR.glob("muestras-*.txt")):
-        persona = f.stem.split("-", 1)[1] if "-" in f.stem else ""
-        if not persona:
-            continue
-        try:
-            lines = f.read_text(encoding="utf-8").splitlines()
-        except Exception:
-            continue
-        for line in lines:
-            line = line.strip()
-            if not line:
-                continue
-            conn.execute(
-                "INSERT INTO muestras (persona, text, enabled, created_at, updated_at)"
-                " VALUES (?,?,1,?,?)",
-                (persona, line, now, now),
-            )
-
-
-def init_db():
-    conn = db()
-    try:
-        conn.executescript(SCHEMA)
-        _migrate_jobs(conn)
-        _migrate_runs(conn)
-        seed_contacts(conn)
-        seed_muestras(conn)
-        conn.commit()
-    finally:
-        conn.close()
 
 
 def persona_exists(key: str) -> bool:
@@ -275,6 +146,45 @@ class JobIn(BaseModel):
     def _k(cls, v):
         if v is not None and not 1 <= v <= 7:
             raise ValueError("random_per_week debe estar entre 1 y 7")
+        return v
+
+    @field_validator("delay_min", "delay_max")
+    @classmethod
+    def _delay(cls, v):
+        if not 0 <= v <= 1440:
+            raise ValueError("el retardo debe estar entre 0 y 1440 minutos")
+        return v
+
+    @model_validator(mode="after")
+    def _delay_range(self):
+        if self.delay_enabled and self.delay_max < self.delay_min:
+            raise ValueError("delay_max debe ser mayor o igual a delay_min")
+        return self
+
+
+class OneTimeIn(BaseModel):
+    persona: str
+    text: str = Field(min_length=1, max_length=2000)
+    send_at: str
+    dry_run: bool = False
+    delay_enabled: bool = False
+    delay_min: int = 1
+    delay_max: int = 60
+
+    @field_validator("persona")
+    @classmethod
+    def _persona(cls, v):
+        if not persona_exists(v):
+            raise ValueError(f"persona no existe: {v}")
+        return v
+
+    @field_validator("send_at")
+    @classmethod
+    def _send_at(cls, v):
+        try:
+            datetime.fromisoformat(v)
+        except ValueError:
+            raise ValueError("send_at debe tener formato ISO (YYYY-MM-DDTHH:MM:SS)")
         return v
 
     @field_validator("delay_min", "delay_max")
@@ -467,6 +377,105 @@ def send_worker(run_id: int):
     _finish_run(run_id, result["exit_code"], result["status"], output, cmd_str)
 
 
+def one_time_to_dict(row) -> dict:
+    return {
+        "id": row["id"],
+        "persona": row["persona"],
+        "text": row["text"],
+        "send_at": row["send_at"],
+        "status": row["status"],
+        "dry_run": bool(row["dry_run"]),
+        "delay_enabled": bool(row["delay_enabled"]),
+        "delay_min": row["delay_min"],
+        "delay_max": row["delay_max"],
+        "result": row["result"],
+        "sent_at": row["sent_at"],
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+    }
+
+
+def _finish_one_time(row_id: int, status: str, result: str):
+    conn = db()
+    try:
+        conn.execute(
+            "UPDATE one_time SET status=?, result=?, sent_at=?, updated_at=? WHERE id=?",
+            (status, result, datetime.now().isoformat(), datetime.now().isoformat(), row_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    logger.info("one-time %s: %s", row_id, status)
+
+
+def send_one_time_worker(row_id: int):
+    conn = db()
+    try:
+        row = conn.execute("SELECT * FROM one_time WHERE id=?", (row_id,)).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        return
+    delay_seconds = 0
+    if row["delay_enabled"]:
+        delay_seconds = random.randint(
+            int(row["delay_min"]) * 60, int(row["delay_max"]) * 60
+        )
+    if delay_seconds:
+        time.sleep(delay_seconds)
+    conn = db()
+    try:
+        contact = conn.execute(
+            "SELECT * FROM contacts WHERE key=?", (row["persona"],)
+        ).fetchone()
+    finally:
+        conn.close()
+    if not contact:
+        _finish_one_time(row_id, "failed", f"no hay contacto con la clave '{row['persona']}'")
+        return
+    logger.info(
+        "one-time %s: envío a %s (persona=%s, delay=%ss)",
+        row_id, contact["jid"], row["persona"], delay_seconds,
+    )
+    result = wa_bot.send_message(
+        contact["jid"], row["text"], dry_run=bool(row["dry_run"])
+    )
+    output = (
+        f"persona={row['persona']}\n"
+        f"contacto={contact['name']} <{contact['jid']}>\n"
+        f"mensaje={row['text']}\n"
+        f"delay={delay_seconds}s\n"
+        f"{result['output'] or ''}"
+    )
+    _finish_one_time(row_id, result["status"], output)
+
+
+def dispatch_due_one_time(conn):
+    now = datetime.now()
+    rows = conn.execute(
+        "SELECT * FROM one_time WHERE status='pending' AND send_at <= ?",
+        (now.isoformat(),),
+    ).fetchall()
+    for row in rows:
+        send_at = datetime.fromisoformat(row["send_at"])
+        overdue_min = (now - send_at).total_seconds() / 60.0
+        if overdue_min > SEND_GRACE_MINUTES:
+            reason = f"[omitido: el envío venció hace {int(overdue_min)} min]"
+            conn.execute(
+                "UPDATE one_time SET status='failed', result=?, updated_at=? WHERE id=?",
+                (reason, now.isoformat(), row["id"]),
+            )
+            logger.info("one-time %s: %s", row["id"], reason)
+        else:
+            conn.execute(
+                "UPDATE one_time SET status='running', updated_at=? WHERE id=?",
+                (now.isoformat(), row["id"]),
+            )
+            threading.Thread(
+                target=send_one_time_worker, args=(row["id"],), daemon=True
+            ).start()
+
+
 def dispatch_pending(conn):
     now = datetime.now()
     rows = conn.execute(
@@ -524,6 +533,7 @@ def tick():
         for job in jobs:
             _maybe_run(conn, job)
         dispatch_pending(conn)
+        dispatch_due_one_time(conn)
         conn.commit()
     finally:
         conn.close()
@@ -547,6 +557,11 @@ def mark_stale_running():
             " WHERE status='running'",
             (datetime.now().isoformat(),),
         )
+        conn.execute(
+            "UPDATE one_time SET status='failed', result=?, updated_at=?"
+            " WHERE status='running'",
+            ("[interrumpido por reinicio del servidor]", datetime.now().isoformat()),
+        )
         conn.commit()
     finally:
         conn.close()
@@ -555,7 +570,7 @@ def mark_stale_running():
 @asynccontextmanager
 async def lifespan(app_):
     global scheduler_started
-    init_db()
+    init_db(db)
     mark_stale_running()
     scheduler_started = datetime.now()
     t = threading.Thread(target=scheduler_loop, daemon=True, name="scheduler")
@@ -893,6 +908,81 @@ def delete_muestra(muestra_id: int):
         conn.close()
 
 
+@api_router.get("/api/one-time")
+def list_one_time():
+    conn = db()
+    try:
+        rows = conn.execute("SELECT * FROM one_time ORDER BY send_at DESC, id DESC").fetchall()
+        return [one_time_to_dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+@api_router.post("/api/one-time")
+def create_one_time(m: OneTimeIn):
+    now = datetime.now().isoformat()
+    conn = db()
+    try:
+        cur = conn.execute(
+            """INSERT INTO one_time (persona, text, send_at, status, dry_run,
+               delay_enabled, delay_min, delay_max, created_at, updated_at)
+               VALUES (?,?,?, 'pending', ?,?,?,?,?,?)""",
+            (
+                m.persona,
+                m.text,
+                m.send_at,
+                int(m.dry_run),
+                int(m.delay_enabled),
+                m.delay_min,
+                m.delay_max,
+                now,
+                now,
+            ),
+        )
+        conn.commit()
+        row = conn.execute("SELECT * FROM one_time WHERE id=?", (cur.lastrowid,)).fetchone()
+        return one_time_to_dict(row)
+    finally:
+        conn.close()
+
+
+@api_router.post("/api/one-time/{one_time_id}/cancel")
+def cancel_one_time(one_time_id: int):
+    conn = db()
+    try:
+        row = conn.execute("SELECT * FROM one_time WHERE id=?", (one_time_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "envío único no encontrado")
+        if row["status"] != "pending":
+            raise HTTPException(400, f"no se puede cancelar un envío en estado '{row['status']}'")
+        now = datetime.now().isoformat()
+        conn.execute(
+            "UPDATE one_time SET status='cancelled', updated_at=? WHERE id=?",
+            (now, one_time_id),
+        )
+        conn.commit()
+        row = conn.execute("SELECT * FROM one_time WHERE id=?", (one_time_id,)).fetchone()
+        return one_time_to_dict(row)
+    finally:
+        conn.close()
+
+
+@api_router.delete("/api/one-time/{one_time_id}")
+def delete_one_time(one_time_id: int):
+    conn = db()
+    try:
+        row = conn.execute("SELECT * FROM one_time WHERE id=?", (one_time_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "envío único no encontrado")
+        if row["status"] == "running":
+            raise HTTPException(400, "no se puede eliminar un envío en curso")
+        conn.execute("DELETE FROM one_time WHERE id=?", (one_time_id,))
+        conn.commit()
+        return {"ok": True}
+    finally:
+        conn.close()
+
+
 @api_router.get("/api/status")
 def status():
     conn = db()
@@ -909,6 +999,10 @@ def status():
         ).fetchone()[0]
         contacts_total = conn.execute("SELECT COUNT(*) FROM contacts").fetchone()[0]
         muestras_total = conn.execute("SELECT COUNT(*) FROM muestras").fetchone()[0]
+        one_time_total = conn.execute("SELECT COUNT(*) FROM one_time").fetchone()[0]
+        one_time_pending = conn.execute(
+            "SELECT COUNT(*) FROM one_time WHERE status='pending'"
+        ).fetchone()[0]
     finally:
         conn.close()
     return {
@@ -923,6 +1017,8 @@ def status():
         "runs_pending": pending,
         "contacts_total": contacts_total,
         "muestras_total": muestras_total,
+        "one_time_total": one_time_total,
+        "one_time_pending": one_time_pending,
     }
 
 

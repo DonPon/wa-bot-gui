@@ -14,7 +14,8 @@ import json
 import sys
 from datetime import datetime
 
-from app import BASE_DIR, db, init_db
+from app import BASE_DIR, db
+from seeds import init_db
 
 CONTACTOS_JSON = BASE_DIR / "contactos.json"
 
@@ -120,7 +121,7 @@ def main():
     )
     args = parser.parse_args()
 
-    init_db()
+    init_db(db)
     conn = db()
     try:
         ic, uc = migrate_contacts(conn)

@@ -3,6 +3,7 @@ const WEEKDAY_FULL = ["domingo", "lunes", "martes", "miércoles", "jueves", "vie
 let jobs = [];
 let contacts = [];
 let muestras = [];
+let oneTime = [];
 let selectedPersona = "all";
 let editingId = null;
 let editingContactId = null;
@@ -63,13 +64,14 @@ function contactLabel(key) {
 }
 
 function statusLabel(s) {
-  return ({ running: "enviando", pending: "en espera", success: "éxito", failed: "fallido" })[s] || s;
+  return ({ running: "enviando", pending: "en espera", success: "éxito", failed: "fallido", cancelled: "cancelado" })[s] || s;
 }
 
 /* ---- navegación por pestañas ---- */
 function switchTab(tab) {
   document.querySelectorAll(".tab-btn").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
-  ["jobs", "contacts", "muestras"].forEach((s) => $("section-" + s).classList.toggle("hidden", s !== tab));
+  ["jobs", "one-time", "contacts", "muestras"].forEach((s) => $("section-" + s).classList.toggle("hidden", s !== tab));
+  if (tab === "one-time") refreshOneTime();
   if (tab === "contacts") refreshContacts();
   if (tab === "muestras") refreshMuestras();
 }
@@ -85,6 +87,7 @@ function populatePersonaSelects() {
   const opts = personaOptions();
   $("f-persona").innerHTML = opts || "";
   $("f-m-persona").innerHTML = opts || "";
+  $("f-o-persona").innerHTML = opts || "";
   $("job-no-contacts").classList.toggle("hidden", contacts.length > 0);
   const filter = $("muestra-filter");
   const current = filter.value || "all";
@@ -317,6 +320,116 @@ async function saveMuestra(e) {
   }
 }
 
+/* ---- envío único ---- */
+function oneTimeCard(o) {
+  return `
+  <div class="card" data-oid="${o.id}">
+    <div class="job-head">
+      <h3>${escapeHtml(contactLabel(o.persona))}</h3>
+      ${o.dry_run ? '<span class="badge badge-dry">dry-run</span>' : ""}
+      ${o.delay_enabled ? `<span class="badge badge-delay">retardo ${o.delay_min}-${o.delay_max}min</span>` : ""}
+      <span class="run-status ${escapeHtml(o.status)}">${escapeHtml(statusLabel(o.status))}</span>
+      <span class="spacer"></span>
+    </div>
+    <p class="muestra-text">${escapeHtml(o.text)}</p>
+    <div class="job-grid">
+      <div class="job-cell"><div class="k">Programado para</div><div class="v">${fmtDT(o.send_at)}</div></div>
+      <div class="job-cell"><div class="k">Creado</div><div class="v">${fmtDT(o.created_at)}</div></div>
+      ${o.sent_at ? `<div class="job-cell"><div class="k">Enviado</div><div class="v">${fmtDT(o.sent_at)}</div></div>` : ""}
+    </div>
+    ${o.result ? `<pre class="one-time-result">${escapeHtml(o.result)}</pre>` : ""}
+    <div class="job-actions">
+      ${o.status === "pending" ? '<button class="btn btn-sm btn-cancel-one-time">Cancelar</button>' : ""}
+      <button class="btn btn-sm btn-danger btn-del-one-time">Eliminar</button>
+    </div>
+  </div>`;
+}
+
+function renderOneTime() {
+  const container = $("one-time-container");
+  if (!oneTime.length) {
+    container.innerHTML = '<p class="muted">No hay envíos únicos. Programa uno con “+ Agregar envío único”.</p>';
+    return;
+  }
+  container.innerHTML = oneTime.map(oneTimeCard).join("");
+}
+
+async function refreshOneTime() {
+  try {
+    oneTime = await api("/api/one-time");
+    renderOneTime();
+  } catch (e) {
+    $("one-time-container").innerHTML = `<p class="muted" style="color:var(--red)">Error al cargar: ${escapeHtml(e.message)}</p>`;
+  }
+}
+
+function updateOneTimeDelayFields() {
+  $("o-delay-options").classList.toggle("hidden", !$("f-o-delay-enabled").checked);
+}
+
+function pad2(n) {
+  return String(n).padStart(2, "0");
+}
+
+function openOneTimeModal() {
+  $("modal-one-time-title").textContent = "Nuevo envío único";
+  $("f-o-id").value = "";
+  $("f-o-persona").value = contacts[0]?.key || "";
+  $("f-o-text").value = "";
+  $("f-o-dry-run").checked = false;
+  $("f-o-delay-enabled").checked = false;
+  $("f-o-delay-min").value = 1;
+  $("f-o-delay-max").value = 60;
+  const d = new Date(Date.now() + 60 * 60 * 1000);
+  $("f-o-send-at").value = `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+  updateOneTimeDelayFields();
+  $("modal-one-time").classList.remove("hidden");
+  $("f-o-text").focus();
+}
+
+function closeOneTimeModal() {
+  $("modal-one-time").classList.add("hidden");
+}
+
+async function saveOneTime(e) {
+  e.preventDefault();
+  const raw = $("f-o-send-at").value;
+  const d = new Date(raw);
+  const payload = {
+    persona: $("f-o-persona").value,
+    text: $("f-o-text").value.trim(),
+    send_at: `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}:00`,
+    dry_run: $("f-o-dry-run").checked,
+    delay_enabled: $("f-o-delay-enabled").checked,
+    delay_min: parseInt($("f-o-delay-min").value, 10) || 0,
+    delay_max: parseInt($("f-o-delay-max").value, 10) || 60,
+  };
+  if (!payload.persona) {
+    alert("Primero agrega un contacto en la pestaña “Contactos”.");
+    return;
+  }
+  if (!payload.text) {
+    alert("Escribe el mensaje.");
+    return;
+  }
+  if (!raw || isNaN(d.getTime())) {
+    alert("Indica una fecha y hora válidas.");
+    return;
+  }
+  if (payload.delay_enabled && payload.delay_max < payload.delay_min) {
+    alert("El retardo máximo debe ser mayor o igual al mínimo.");
+    return;
+  }
+  try {
+    await api("/api/one-time", { method: "POST", body: JSON.stringify(payload) });
+    closeOneTimeModal();
+    refreshOneTime();
+    refreshStatus();
+  } catch (err) {
+    alert("Error: " + err.message);
+  }
+}
+
 /* ---- status ---- */
 async function refreshStatus() {
   try {
@@ -332,7 +445,7 @@ async function refreshStatus() {
     const up = s.started_at ? Math.round((Date.now() - new Date(s.started_at)) / 60000) : 0;
     const h = Math.floor(up / 60), m = up % 60;
     $("sched-info").textContent =
-      `tick cada ${s.tick_seconds}s · grace ${s.grace_minutes}min · jobs ${s.jobs_total} (${s.jobs_enabled} activos) · contactos ${s.contacts_total} · muestras ${s.muestras_total} · en espera ${s.runs_pending} · corriendo ${s.runs_running} · uptime ${h}h ${m}m`;
+      `tick cada ${s.tick_seconds}s · grace ${s.grace_minutes}min · jobs ${s.jobs_total} (${s.jobs_enabled} activos) · envíos únicos ${s.one_time_total} (${s.one_time_pending} pend) · contactos ${s.contacts_total} · muestras ${s.muestras_total} · en espera ${s.runs_pending} · corriendo ${s.runs_running} · uptime ${h}h ${m}m`;
   } catch (e) {
     $("status-pill").textContent = "sin conexión";
     $("status-pill").className = "pill pill-bad";
@@ -552,6 +665,35 @@ $("muestras-container").addEventListener("click", async (e) => {
   }
 });
 
+/* ---- events: envío único ---- */
+$("btn-add-one-time").addEventListener("click", openOneTimeModal);
+$("btn-close-one-time").addEventListener("click", closeOneTimeModal);
+$("btn-cancel-one-time-modal").addEventListener("click", closeOneTimeModal);
+$("one-time-form").addEventListener("submit", saveOneTime);
+$("f-o-delay-enabled").addEventListener("change", updateOneTimeDelayFields);
+$("modal-one-time").addEventListener("click", (e) => { if (e.target === $("modal-one-time")) closeOneTimeModal(); });
+
+$("one-time-container").addEventListener("click", async (e) => {
+  const card = e.target.closest(".card");
+  if (!card) return;
+  const id = parseInt(card.dataset.oid, 10);
+
+  if (e.target.closest(".btn-cancel-one-time")) {
+    if (!confirm("Cancelar este envío pendiente?")) return;
+    try {
+      await api(`/api/one-time/${id}/cancel`, { method: "POST" });
+      refreshOneTime();
+    } catch (err) { alert("Error: " + err.message); }
+  } else if (e.target.closest(".btn-del-one-time")) {
+    if (!confirm("Eliminar este envío?")) return;
+    try {
+      await api(`/api/one-time/${id}`, { method: "DELETE" });
+      refreshOneTime();
+      refreshStatus();
+    } catch (err) { alert("Error: " + err.message); }
+  }
+});
+
 /* ---- login ---- */
 $("login-form").addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -562,6 +704,7 @@ $("login-form").addEventListener("submit", async (e) => {
     hideLogin();
     refreshContacts();
     refreshJobs();
+    refreshOneTime();
     refreshStatus();
   } catch (err) {
     // api() ya mostró el login y limpió el token
@@ -578,6 +721,7 @@ async function boot() {
     hideLogin();
     refreshContacts();
     refreshJobs();
+    refreshOneTime();
     refreshStatus();
   } catch (err) {
     // token inválido: api() ya mostró el login
@@ -587,3 +731,4 @@ async function boot() {
 boot();
 setInterval(refreshJobs, 30000);
 setInterval(refreshStatus, 15000);
+setInterval(refreshOneTime, 30000);
