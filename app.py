@@ -210,6 +210,24 @@ def parse_hhmm(s: str):
     return int(h), int(m)
 
 
+def pick_random_days(k: int) -> list[int]:
+    """Elige k días (0=lun ... 6=dom) al azar, variando cada semana.
+
+    Evita dos días seguidos cuando es posible (k <= 4). Para k >= 5 los
+    reparte de forma uniforme a lo largo de la semana.
+    """
+    if k <= 0:
+        return []
+    if k >= 5:
+        # muchos días: repartir de forma uniforme por la semana
+        step = 7 / min(k, 7)
+        start = random.randrange(7)
+        return sorted({int((start + i * step) % 7) for i in range(min(k, 7))})
+    # escoger k días sin dos seguidos sobre los 7 (método "posiciones + i")
+    positions = sorted(random.sample(range(7 - k + 1), k))
+    return [positions[i] + i for i in range(k)]
+
+
 def ensure_rolls(job) -> dict:
     if job["days_mode"] != "random":
         return {}
@@ -220,7 +238,7 @@ def ensure_rolls(job) -> dict:
     changed = False
     for wk in weeks:
         if wk not in rolls and k > 0:
-            rolls[wk] = sorted(random.sample(range(7), k))
+            rolls[wk] = pick_random_days(k)
             changed = True
     if changed:
         conn = db()

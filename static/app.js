@@ -35,9 +35,14 @@ async function api(path, opts = {}) {
     const text = await res.text();
     let detail = text;
     try {
-      detail = JSON.parse(text).detail || text;
+      const data = JSON.parse(text);
+      if (Array.isArray(data.detail)) {
+        detail = data.detail.map((e) => `${(e.loc || []).slice(1).join(".")}: ${e.msg}`).join("; ");
+      } else {
+        detail = data.detail || text;
+      }
     } catch (_) {}
-    throw new Error(detail);
+    throw new Error(String(detail));
   }
   return res.json();
 }
