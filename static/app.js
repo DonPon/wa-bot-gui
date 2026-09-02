@@ -596,7 +596,7 @@ $("jobs-container").addEventListener("click", async (e) => {
 
   if (e.target.closest(".toggle")) {
     try {
-      await api(`/api/jobs/${id}`, { method: "PUT", body: JSON.stringify({ ...job, enabled: !job.enabled }) });
+      await api(`/api/jobs/${id}/toggle`, { method: "PUT" });
       refreshJobs();
     } catch (err) { alert("Error: " + err.message); }
   } else if (e.target.closest(".btn-run")) {

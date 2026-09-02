@@ -667,6 +667,24 @@ def list_jobs():
         conn.close()
 
 
+@api_router.put("/api/jobs/{job_id}/toggle")
+def toggle_job(job_id: int):
+    conn = db()
+    try:
+        row = conn.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "job no encontrado")
+        conn.execute(
+            "UPDATE jobs SET enabled=?, updated_at=? WHERE id=?",
+            (0 if row["enabled"] else 1, datetime.now().isoformat(), job_id),
+        )
+        conn.commit()
+        row = conn.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
+        return job_to_dict(row)
+    finally:
+        conn.close()
+
+
 @api_router.post("/api/jobs")
 def create_job(job: JobIn):
     now = datetime.now().isoformat()
