@@ -10,6 +10,8 @@ let editingContactId = null;
 let editingMuestraId = null;
 let TOKEN = localStorage.getItem("wabot_token") || "";
 
+const BASE_PATH = "/wabot";
+
 const $ = (id) => document.getElementById(id);
 
 function showLogin() {
@@ -24,7 +26,7 @@ function hideLogin() {
 
 async function api(path, opts = {}) {
   const headers = { "Content-Type": "application/json", "X-Token": TOKEN };
-  const res = await fetch(path, { ...opts, headers });
+  const res = await fetch(BASE_PATH + path, { ...opts, headers });
   if (res.status === 401) {
     localStorage.removeItem("wabot_token");
     TOKEN = "";
